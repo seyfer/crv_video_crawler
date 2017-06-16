@@ -2,9 +2,10 @@
 
 namespace AppBundle\Command;
 
-use Goutte\Client;
+use Goutte\Client as GoutteClient;
 use GuzzleHttp\Client as GuzzleClient;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -24,30 +25,44 @@ class GithubCrawlCommand extends Command
     private $withAuth = false;
 
     /**
-     * @var Client
+     * @var GoutteClient
      */
     private $client;
 
     /**
      * GithubCrawlCommand constructor.
      * @param \Predis\Client $redis
+     * @param GoutteClient $client
      */
-    public function __construct(\Predis\Client $redis)
+    public function __construct(\Predis\Client $redis, \Goutte\Client $client)
     {
         // you *must* call the parent constructor
         parent::__construct();
 
-        $this->redis = $redis;
+        $this->redis = $this->initRedis($redis);
 
-        $this->client = $this->initClient();
+        $this->client = $this->initClient($client);
     }
 
     /**
-     * @return Client
+     * @param \Predis\Client $redis
+     * @return \Predis\Client
      */
-    private function initClient()
+    private function initRedis(\Predis\Client $redis)
     {
-        $client       = new Client();
+        $redis->connect();
+        if (!$redis->isConnected()) {
+            throw new \RuntimeException('Please check Redis config and installation');
+        }
+
+        return $redis;
+    }
+
+    /**
+     * @return GoutteClient
+     */
+    private function initClient(\Goutte\Client $client)
+    {
         $guzzleClient = new GuzzleClient([
                                              'timeout' => 60,
                                          ]);
@@ -64,8 +79,10 @@ class GithubCrawlCommand extends Command
         $this
             ->setName('github:crawl')
             ->setDescription('...')
-            ->addOption('username', 'u', InputOption::VALUE_REQUIRED, 'Github username', 'seyfer')
-            ->addOption('password', 'p', InputOption::VALUE_OPTIONAL, 'Github password', null);
+            ->addArgument('username', InputArgument::REQUIRED, 'Github username')
+            ->addOption(
+                'password', 'p', InputOption::VALUE_OPTIONAL, 'Github password', null
+            );
     }
 
     /**
@@ -75,7 +92,7 @@ class GithubCrawlCommand extends Command
      */
     protected function execute(InputInterface $input, OutputInterface $output)
     {
-        $username = $input->getOption('username');
+        $username = $input->getArgument('username') ?? 'seyfer';
         $password = $input->getOption('password');
 
         $output->writeln(implode(' ', [$username, $password]));

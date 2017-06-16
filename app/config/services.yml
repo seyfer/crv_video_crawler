@@ -33,3 +33,10 @@ services:
     # AppBundle\Service\ExampleService:
     #     arguments:
     #         $someArgument: 'some_value'
+
+    GoutteClient:
+      class: Goutte\Client
+
+    GithubCrawlCommand:
+      class: AppBundle\Command\GithubCrawlCommand
+      arguments: ['@snc_redis.default','@GoutteClient']
