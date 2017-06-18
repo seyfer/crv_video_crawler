@@ -29,6 +29,10 @@ class GithubCrawlCommand extends Command
      */
     private $client;
 
+    private const BASE_URL = 'https://github.com/';
+
+    private const LOGIN_URL = self::BASE_URL . 'login';
+
     /**
      * GithubCrawlCommand constructor.
      * @param \Predis\Client $redis
@@ -123,7 +127,7 @@ class GithubCrawlCommand extends Command
         $output->writeln('pagesCount');
 
         for ($i = 1; $i <= $pagesCount; $i++) {
-            $pageLink = 'https://github.com/seyfer?page=' . $i . '&tab=repositories';
+            $pageLink = self::BASE_URL . 'seyfer?page=' . $i . '&tab=repositories';
 
             $crawler = $this->client->request('GET', $pageLink);
 
@@ -153,7 +157,7 @@ class GithubCrawlCommand extends Command
 
         if (!$this->redis->get($userCacheKey)) {
 
-            $crawler = $this->client->request('GET', 'https://github.com/' . $username);
+            $crawler = $this->client->request('GET', self::BASE_URL . $username);
 
 //            $description = $crawler->filterXpath('//meta[@name="description"]')
 //                             ->extract(['content']);
@@ -177,7 +181,7 @@ class GithubCrawlCommand extends Command
 
             $output->writeln('from cache');
 
-            $crawler = new Crawler($html, 'https://github.com/' . $username);
+            $crawler = new Crawler($html, self::BASE_URL . $username);
         }
 
         return $crawler;
@@ -195,7 +199,7 @@ class GithubCrawlCommand extends Command
 
         if (!$this->redis->get($loginCacheKey)) {
 
-            $crawler = $this->client->request('GET', 'https://github.com/login');
+            $crawler = $this->client->request('GET', self::LOGIN_URL);
 
             // select the form and fill in some values
             $form             = $crawler->selectButton('Sign in')->form();
@@ -236,7 +240,7 @@ class GithubCrawlCommand extends Command
 
             $output->writeln('from cache');
 
-            $crawler = new Crawler($html, 'https://github.com');
+            $crawler = new Crawler($html, self::BASE_URL);
         }
 
         $profileLink = $crawler->selectLink('Your profile')->link();

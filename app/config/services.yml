@@ -40,3 +40,8 @@ services:
     GithubCrawlCommand:
       class: AppBundle\Command\GithubCrawlCommand
       arguments: ['@snc_redis.default','@GoutteClient']
+
+    app.video_link.repository:
+      class: AppBundle\Entity\VideoLinkRepository
+      factory: ['@doctrine.orm.default_entity_manager', getRepository]
+      arguments: ['\AppBundle\Entity\VideoLink']
