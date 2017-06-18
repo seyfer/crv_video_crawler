@@ -284,7 +284,11 @@ class CrvCrawlCommand extends ContainerAwareCommand
                 $fs->mkdir($courseDir);
             }
 
-            $localFile = $courseDir . DIRECTORY_SEPARATOR . $link->getVideoName() . ".mp4";
+            $videoName = $link->getVideoName();
+            $videoName = str_replace('?', '', $videoName);
+            $videoName = str_replace('/','-', $videoName);
+
+            $localFile = $courseDir . DIRECTORY_SEPARATOR . $videoName . ".mp4";
 
             if ($fs->exists($localFile) && $overwrite) {
                 $fs->remove($localFile);
