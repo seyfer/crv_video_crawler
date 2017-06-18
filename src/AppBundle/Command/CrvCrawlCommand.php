@@ -357,7 +357,7 @@ class CrvCrawlCommand extends ContainerAwareCommand
 //        $output->writeln('Start Watching');
 
         $pageCacheKey = 'crv_page_' . $fromPage;
-        $crawler      = $this->loadUrlWithCache($pageCacheKey, $this->preparePageUrl(1));
+        $crawler      = $this->loadUrlWithCache($pageCacheKey, $this->preparePageUrl($fromPage));
         $this->output->writeln($pageCacheKey . PHP_EOL);
 
         $pagesCount = 1;
