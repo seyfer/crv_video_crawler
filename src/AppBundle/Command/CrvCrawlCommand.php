@@ -11,11 +11,12 @@ use Goutte\Client as GoutteClient;
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Exception\ConnectException;
 use Symfony\Bundle\FrameworkBundle\Command\ContainerAwareCommand;
-use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\DomCrawler\Crawler;
+use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\Finder\Finder;
 
 class CrvCrawlCommand extends ContainerAwareCommand
 {
@@ -108,21 +109,30 @@ class CrvCrawlCommand extends ContainerAwareCommand
         $this
             ->setName('crv:crawl')
             ->setDescription('crawl crv video links db and download videos')
-            ->addArgument('username', InputArgument::REQUIRED, 'crv username')
-            ->addArgument('password', InputArgument::REQUIRED, 'crv password')
+            ->addOption('username', 'u', InputOption::VALUE_OPTIONAL, 'crv username')
+            ->addOption('password', 'p', InputOption::VALUE_OPTIONAL, 'crv password')
             ->addOption(
-                'not-update-db', 'u',
+                'not-update-db', 'nud',
                 InputOption::VALUE_OPTIONAL, 'Flag to not update links db', 0
             )
             ->addOption(
-                'not-download', 'd',
+                'not-download', 'nd',
                 InputOption::VALUE_OPTIONAL, 'Flag to not download videos', 0
             )
             ->addOption(
-                'download-path', 'p', InputOption::VALUE_OPTIONAL, 'where to download'
+                'download-path', 'dp', InputOption::VALUE_OPTIONAL, 'where to download'
             )
             ->addOption(
-                'from-page', 'f', InputOption::VALUE_OPTIONAL, 'start from page'
+                'from-page', 'fp', InputOption::VALUE_OPTIONAL, 'start from page'
+            )
+            ->addOption(
+                'overwrite', 'o', InputOption::VALUE_OPTIONAL, 'overwrite videos', 0
+            )
+            ->addOption(
+                'from-id', 'fi', InputOption::VALUE_OPTIONAL, 'download from id'
+            )
+            ->addOption(
+                'id', 'i', InputOption::VALUE_OPTIONAL, 'download only id'
             );
     }
 
@@ -135,8 +145,8 @@ class CrvCrawlCommand extends ContainerAwareCommand
     {
         $this->output = $output;
 
-        $username = $input->getArgument('username') ?? 'seyfer';
-        $password = $input->getArgument('password');
+        $username = $input->getOption('username') ?? 'seyfer';
+        $password = $input->getOption('password') ?? null;
 
         $this->output->writeln(implode(' ', [$username, $password]));
 
@@ -144,13 +154,10 @@ class CrvCrawlCommand extends ContainerAwareCommand
 
         $this->output->writeln($downloadPath);
 
-        //count videos in folder recursively
-        $videosCount = 0;
+        $videosCount = $this->getFilesCount($downloadPath);
         $this->output->writeln("videos count in folder: " . $videosCount);
 
-        //get links
-        $links      = $this->getLinks();
-        $linksCount = count($links);
+        $linksCount = $this->getLinksCount();
         $this->output->writeln("links count in db: " . $linksCount);
 
         $fromPage = (int)$input->getOption('from-page') ?? 1;
@@ -158,16 +165,72 @@ class CrvCrawlCommand extends ContainerAwareCommand
         if (!$input->getOption('not-update-db')) {
             //update links db
             $this->updateLinksDB($username, $password, $fromPage);
+
+            $linksCount = $this->getLinksCount();
+            $this->output->writeln("links count in db AFTER: " . $linksCount);
         }
 
         if (!$input->getOption('not-download')) {
-            //get not downloaded links
-            $links = $this->getLinks([
-                                         'downloaded' => false,
-                                     ]);
 
-            $this->downloadLinks($links, $downloadPath);
+            $links = $this->getLinksForDownload($input);
+
+            $overwrite = (boolean)$input->getOption('overwrite') ?? false;
+
+            $this->downloadLinks($links, $downloadPath, $overwrite);
+
+            $videosCount = $this->getFilesCount($downloadPath);
+            $this->output->writeln("videos count in folder AFTER: " . $videosCount);
         }
+    }
+
+    /**
+     * @param InputInterface $input
+     * @return array
+     */
+    private function getLinksForDownload(InputInterface $input)
+    {
+        $params = [
+            'downloaded' => false,
+        ];
+
+        $fromId = $input->getOption('from-id') ?? null;
+        if ($fromId) {
+            $params['fromId'] = $fromId;
+        }
+
+        $id = $input->getOption('id') ?? null;
+        if ($id) {
+            $params['id'] = $id;
+        }
+
+        //get not downloaded links
+        $links = $this->getLinks($params);
+
+        return $links;
+    }
+
+    /**
+     * @return int
+     */
+    private function getLinksCount()
+    {
+        $links      = $this->getLinks();
+        $linksCount = count($links);
+
+        return $linksCount;
+    }
+
+    /**
+     * @param $downloadPath
+     * @return int
+     */
+    private function getFilesCount($downloadPath)
+    {
+        //count videos in folder recursively
+        $finder      = new Finder();
+        $videosCount = $finder->files()->in($downloadPath)->count();
+
+        return $videosCount;
     }
 
     /**
@@ -188,8 +251,9 @@ class CrvCrawlCommand extends ContainerAwareCommand
 
             $downloadPath .= 'crv_videos';
 
-            if (!file_exists($downloadPath)) {
-                mkdir($downloadPath, 0777, true);
+            $fs = new Filesystem();
+            if (!$fs->exists($downloadPath)) {
+                $fs->mkdir($downloadPath);
             }
         }
 
@@ -204,19 +268,40 @@ class CrvCrawlCommand extends ContainerAwareCommand
     /**
      * @param array $links
      * @param $downloadPath
+     * @param bool $overwrite
      */
-    private function downloadLinks(array $links, $downloadPath)
+    private function downloadLinks(array $links, $downloadPath, $overwrite = false)
     {
         /** @var VideoLink $link */
         foreach ($links as $link) {
             $videoUrl = $link->getLink();
 
-            $localFile = $downloadPath . DIRECTORY_SEPARATOR .
-                         $link->getCourseName() . DIRECTORY_SEPARATOR . $link->getVideoName() . ".mp4";
+            $fs        = new Filesystem();
+            $courseDir = $downloadPath . DIRECTORY_SEPARATOR .
+                         $link->getCourseName();
 
-            //already exists?
+            if (!$fs->exists($courseDir)) {
+                $fs->mkdir($courseDir);
+            }
+
+            $localFile = $courseDir . DIRECTORY_SEPARATOR . $link->getVideoName() . ".mp4";
+
+            if ($fs->exists($localFile) && $overwrite) {
+                $fs->remove($localFile);
+            }
+
+            if (!$fs->exists($localFile)) {
+                $fs->touch($localFile);
+            }
+
+//            exit(dump($videoUrl, $localFile));
+
+            $this->output->writeln("id " . $link->getId());
 
             $this->downloadVideo($videoUrl, $localFile);
+
+            $link->setDownloaded(true);
+            $this->entityManager->flush();
         }
     }
 
@@ -229,7 +314,10 @@ class CrvCrawlCommand extends ContainerAwareCommand
         $this->output->writeln('downloading from: ' . $videoUrl);
         $this->output->writeln('to: ' . $localFile);
 
-        FileDownloadService::downloadWithFopen($videoUrl, $localFile);
+        FileDownloadService::downloadWithProgress($videoUrl, $localFile, $this->output);
+
+        //make pauses
+        usleep(500000);
     }
 
     /**
@@ -238,7 +326,7 @@ class CrvCrawlCommand extends ContainerAwareCommand
      */
     private function getLinks(array $params = [])
     {
-        return $this->linkRepository->findBy($params);
+        return $this->linkRepository->getLinksBy($params);
     }
 
     /**

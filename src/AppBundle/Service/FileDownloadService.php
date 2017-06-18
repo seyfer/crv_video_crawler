@@ -10,6 +10,9 @@ declare(strict_types=1);
 namespace AppBundle\Service;
 
 
+use Symfony\Component\Console\Helper\ProgressBar;
+use Symfony\Component\Console\Output\OutputInterface;
+
 class FileDownloadService
 {
     /**
@@ -40,7 +43,8 @@ class FileDownloadService
      */
     public static function downloadWithFopen($remoteFile, $localFile)
     {
-        $file    = fopen($remoteFile, 'rb');
+        $file = fopen($remoteFile, 'rb');
+
         $newFile = null;
         if ($file) {
             $newFile = fopen($localFile, 'wb');
@@ -58,6 +62,79 @@ class FileDownloadService
         if ($newFile) {
             fclose($newFile);
         }
+    }
+
+    public static function downloadWithProgress($remoteFile, $localFile, OutputInterface $output)
+    {
+        $file = fopen($remoteFile, 'rb');
+
+        $size       = self::retrieveRemoteFileSize($remoteFile);
+        $bufferSize = 1024 * 8;
+
+        $steps = ceil($size / $bufferSize);
+
+//        exit(dump($size, $bufferSize, $steps));
+
+        $output->writeln('Will download size ' . self::formatBytes($size) .
+                         ' with buffer size ' . $bufferSize . ' in steps ' . $steps);
+
+        // create a new progress bar (50 units)
+        $progress = new ProgressBar($output, $steps);
+        $progress->setFormat('debug');
+        $progress->setRedrawFrequency(100);
+        // start and displays the progress bar
+        $progress->start();
+
+        $newFile = null;
+        if ($file) {
+            $newFile = fopen($localFile, 'wb');
+            if ($newFile) {
+
+                $step = 0;
+                while (!feof($file)) {
+                    fwrite($newFile, fread($file, $bufferSize), $bufferSize);
+                    $step++;
+                    $progress->advance();
+                }
+
+                // ensure that the progress bar is at 100%
+                $progress->finish();
+            }
+        }
+
+        if ($file) {
+            fclose($file);
+        }
+
+        if ($newFile) {
+            fclose($newFile);
+        }
+    }
+
+    private static function formatBytes($size, $precision = 2)
+    {
+        $base     = log($size, 1024);
+        $suffixes = ['', 'K', 'M', 'G', 'T'];
+
+        return round(pow(1024, $base - floor($base)), $precision) . ' ' . $suffixes[(int)floor($base)];
+    }
+
+    public static function retrieveRemoteFileSize($url)
+    {
+        $ch = curl_init($url);
+
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+        curl_setopt($ch, CURLOPT_HEADER, TRUE);
+        curl_setopt($ch, CURLOPT_NOBODY, TRUE);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, TRUE);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+
+        $data = curl_exec($ch);
+        $size = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
+
+        curl_close($ch);
+
+        return $size;
     }
 
     /**

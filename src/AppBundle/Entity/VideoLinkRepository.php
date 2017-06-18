@@ -12,4 +12,33 @@ use Doctrine\ORM\EntityRepository;
  */
 class VideoLinkRepository extends EntityRepository
 {
+    /**
+     * @param array $params
+     * @return array
+     */
+    public function getLinksBy(array $params = [])
+    {
+        $qb = $this->createQueryBuilder('e');
+
+        if (isset($params['downloaded'])) {
+            $qb->andWhere('e.downloaded = :downloaded')
+               ->setParameter('downloaded', (boolean)$params['downloaded']);
+        }
+
+        if (isset($params['fromId'])) {
+            $qb->andWhere('e.id >= :fromId')
+               ->setParameter('fromId', (int)$params['fromId']);
+        }
+
+        if (isset($params['id'])) {
+            $qb->andWhere('e.id >= :id')
+               ->setParameter('id', (int)$params['id']);
+        }
+
+        $qb->orderBy('e.id', 'ASC');
+
+        $query = $qb->getQuery();
+
+        return $query->getResult();
+    }
 }
