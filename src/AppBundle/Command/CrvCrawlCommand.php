@@ -5,9 +5,11 @@ namespace AppBundle\Command;
 
 use AppBundle\Entity\VideoLink;
 use AppBundle\Entity\VideoLinkRepository;
+use AppBundle\Service\FileDownloadService;
 use Doctrine\ORM\EntityManagerInterface;
 use Goutte\Client as GoutteClient;
 use GuzzleHttp\Client as GuzzleClient;
+use GuzzleHttp\Exception\ConnectException;
 use Symfony\Bundle\FrameworkBundle\Command\ContainerAwareCommand;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -35,10 +37,16 @@ class CrvCrawlCommand extends ContainerAwareCommand
      * @var EntityManagerInterface
      */
     private $entityManager;
+
     /**
      * @var VideoLinkRepository
      */
     private $linkRepository;
+
+    /**
+     * @var OutputInterface
+     */
+    private $output;
 
     /**
      * GithubCrawlCommand constructor.
@@ -103,14 +111,19 @@ class CrvCrawlCommand extends ContainerAwareCommand
             ->addArgument('username', InputArgument::REQUIRED, 'crv username')
             ->addArgument('password', InputArgument::REQUIRED, 'crv password')
             ->addOption(
-                'not-update-db', 'nudb',
+                'not-update-db', 'u',
                 InputOption::VALUE_OPTIONAL, 'Flag to not update links db', 0
             )
             ->addOption(
-                'not-download', 'nd',
+                'not-download', 'd',
                 InputOption::VALUE_OPTIONAL, 'Flag to not download videos', 0
             )
-            ->addOption('download-path', 'dp', InputOption::VALUE_OPTIONAL, '');
+            ->addOption(
+                'download-path', 'p', InputOption::VALUE_OPTIONAL, 'where to download'
+            )
+            ->addOption(
+                'from-page', 'f', InputOption::VALUE_OPTIONAL, 'start from page'
+            );
     }
 
     /**
@@ -120,31 +133,40 @@ class CrvCrawlCommand extends ContainerAwareCommand
      */
     protected function execute(InputInterface $input, OutputInterface $output)
     {
+        $this->output = $output;
+
         $username = $input->getArgument('username') ?? 'seyfer';
         $password = $input->getArgument('password');
 
-        $output->writeln(implode(' ', [$username, $password]));
+        $this->output->writeln(implode(' ', [$username, $password]));
 
         $downloadPath = $this->initDownloadPath($input->getOption('download-path'), $username);
 
-        $output->writeln($downloadPath);
+        $this->output->writeln($downloadPath);
 
         //count videos in folder recursively
         $videosCount = 0;
-        $output->writeln("videos count in folder: " . $videosCount);
+        $this->output->writeln("videos count in folder: " . $videosCount);
 
         //get links
         $links      = $this->getLinks();
         $linksCount = count($links);
-        $output->writeln("links count in db: " . $linksCount);
+        $this->output->writeln("links count in db: " . $linksCount);
+
+        $fromPage = (int)$input->getOption('from-page') ?? 1;
 
         if (!$input->getOption('not-update-db')) {
             //update links db
-            $this->updateLinksDB($username, $password, $output);
+            $this->updateLinksDB($username, $password, $fromPage);
         }
 
         if (!$input->getOption('not-download')) {
-            $this->downloadLinks($links);
+            //get not downloaded links
+            $links = $this->getLinks([
+                                         'downloaded' => false,
+                                     ]);
+
+            $this->downloadLinks($links, $downloadPath);
         }
     }
 
@@ -179,32 +201,72 @@ class CrvCrawlCommand extends ContainerAwareCommand
         return $downloadPath;
     }
 
-    private function downloadLinks($links)
+    /**
+     * @param array $links
+     * @param $downloadPath
+     */
+    private function downloadLinks(array $links, $downloadPath)
     {
+        /** @var VideoLink $link */
+        foreach ($links as $link) {
+            $videoUrl = $link->getLink();
 
+            $localFile = $downloadPath . DIRECTORY_SEPARATOR .
+                         $link->getCourseName() . DIRECTORY_SEPARATOR . $link->getVideoName() . ".mp4";
+
+            //already exists?
+
+            $this->downloadVideo($videoUrl, $localFile);
+        }
     }
 
     /**
+     * @param $videoUrl
+     * @param $localFile
+     */
+    private function downloadVideo($videoUrl, $localFile)
+    {
+        $this->output->writeln('downloading from: ' . $videoUrl);
+        $this->output->writeln('to: ' . $localFile);
+
+        FileDownloadService::downloadWithFopen($videoUrl, $localFile);
+    }
+
+    /**
+     * @param array $params
      * @return array
      */
-    private function getLinks()
+    private function getLinks(array $params = [])
     {
-        return $this->linkRepository->findAll();
+        return $this->linkRepository->findBy($params);
+    }
+
+    /**
+     * @param $page
+     * @return string
+     */
+    private function preparePageUrl($page)
+    {
+        return self::BASE_URL . '/courses/text/' . $page;
     }
 
     /**
      * @param $username
      * @param $password
-     * @param $output
+     * @param int $fromPage
      */
-    private function updateLinksDB($username, $password, $output)
+    private function updateLinksDB($username, $password, $fromPage = 1)
     {
         $crawler = $this->login($username, $password);
 
         //Start Watching
-        $coursesLink = $crawler->selectLink('Start Watching')->link();
-        $crawler     = $this->client->request('GET', $coursesLink->getUri());
-        $output->writeln('Start Watching');
+//        $coursesLink = $crawler->selectLink('Start Watching')->link();
+//        $crawler     = $this->client->request('GET', $coursesLink->getUri());
+//        $output->writeln('Start Watching');
+
+        $pageCacheKey = 'crv_page_' . $fromPage;
+        $crawler      = $this->loadUrlWithCache($pageCacheKey, $this->preparePageUrl(1));
+        $this->output->writeln($pageCacheKey . PHP_EOL);
 
         $pagesCount = 1;
         $crawler->filter('.pagination')->filter('a')
@@ -213,25 +275,20 @@ class CrvCrawlCommand extends ContainerAwareCommand
                         $pagesCount = (int)$node->text();
                     }
                 });
-        $output->writeln('pagesCount ' . $pagesCount);
+        $this->output->writeln('pagesCount ' . $pagesCount . PHP_EOL);
 
-        for ($i = 1; $i <= $pagesCount; $i++) {
-            $currentPage = self::BASE_URL . '/courses/text/' . $i;
+        for ($i = $fromPage; $i <= $pagesCount; $i++) {
 
             $pageCacheKey = 'crv_page_' . $i;
-            if ($this->redis->get($pageCacheKey)) {
-                $html    = $this->redis->get($pageCacheKey);
-                $crawler = new Crawler($html);
-            } else {
-                $crawler = $this->client->request('GET', $currentPage);
-                $this->redis->set($pageCacheKey, $crawler->html());
-            }
+            $crawler      = $this->loadUrlWithCache($pageCacheKey, $this->preparePageUrl($i));
+            $this->output->writeln(PHP_EOL . $pageCacheKey);
 
             $crawler->filter('.course-text-list-container')
                     ->each(function (Crawler $node) {
 //                        exit(dump($node));
 
                         $courseName = $node->filter('h2')->text();
+                        $this->output->writeln(PHP_EOL . $courseName . PHP_EOL);
 
 //                        exit(dump($courseName));
 
@@ -247,36 +304,105 @@ class CrvCrawlCommand extends ContainerAwareCommand
                                  $videoName = $tds->getNode(1)->textContent;
                                  $duration  = $tds->getNode(2)->textContent;
 
-                                 $aUrl = $tds->getNode(1)
-                                             ->getElementsByTagName('a')[0]
-                                     ->getAttributeNode('href')->value;
+                                 /** @var \DOMElement $a */
+                                 $a    = $tds->getNode(1)
+                                             ->getElementsByTagName('a')[0];
+                                 $aUrl = $a->getAttributeNode('href')->value;
 
                                  $videoContentUrl = self::BASE_URL . $aUrl;
 
-                                 $crawler = $this->client->request('GET', $videoContentUrl);
+                                 $videoCacheKey = 'crv_video_' . $courseName . "_" . $videoName;
+                                 $crawler       = $this->loadUrlWithCache($videoCacheKey, $videoContentUrl);
 
-                                 $videoUrl = $crawler->filter('.vjs-tech')
-                                                     ->children()
-                                                     ->attr('src');
+//                                 exit(dump());
 
-                                 exit(dump(
-                                     $position,
-                                     $videoName,
-                                     $duration
-                                     , $videoContentUrl, $videoUrl
-                                 ));
+                                 $videoUrl = $crawler->filter('.code-review-video')
+                                                     ->children()->children()->attr('src');
+
+//                                 exit(dump(
+//                                     $position,
+//                                     $videoName,
+//                                     $duration
+//                                     , $videoContentUrl, $videoUrl
+//                                 ));
+
+                                 $this->output->writeln($videoName);
 
                                  $durationTime = \DateTime::createFromFormat('H:i', $duration);
-                                 $linkEntity   = new VideoLink(
+
+                                 $this->createOrUpdateLink(
                                      $courseName, $videoName, $videoUrl, $position, $durationTime
                                  );
 
-                                 $this->entityManager->persist($linkEntity);
+                                 $this->entityManager->flush();
                              });
 
-                        $this->entityManager->flush();
+                        //not safe
+//                        $this->entityManager->flush();
                     });
         }
+    }
+
+    /**
+     * @param $courseName
+     * @param $videoName
+     * @param $videoUrl
+     * @param $position
+     * @param $durationTime
+     */
+    private function createOrUpdateLink($courseName, $videoName, $videoUrl, $position, $durationTime)
+    {
+        /** @var VideoLink $linkEntity */
+        $linkEntity = $this->linkRepository->findOneBy([
+                                                           'courseName' => $courseName,
+                                                           'videoName'  => $videoName,
+                                                       ]);
+        if ($linkEntity) {
+            $linkEntity->setCourseName($courseName);
+            $linkEntity->setVideoName($videoName);
+            $linkEntity->setDuration($durationTime);
+            $linkEntity->setLink($videoUrl);
+            $linkEntity->setPosition($position);
+
+            $this->output->writeln('updated');
+        }
+
+        if (!$linkEntity) {
+            $linkEntity = new VideoLink(
+                $courseName, $videoName, $videoUrl, $position, $durationTime
+            );
+
+            $this->entityManager->persist($linkEntity);
+
+            $this->output->writeln('added');
+        }
+    }
+
+    /**
+     * @param $cacheKey
+     * @param $url
+     * @return Crawler
+     */
+    private function loadUrlWithCache($cacheKey, $url)
+    {
+        if ($this->redis->get($cacheKey)) {
+            $html    = $this->redis->get($cacheKey);
+            $crawler = new Crawler($html);
+        } else {
+            //in order to make pauses
+            usleep(500000);
+
+            try {
+                $crawler = $this->client->request('GET', $url);
+            } catch (ConnectException $e) {
+                //well, try again
+                $crawler = $this->client->request('GET', $url);
+            }
+
+            $this->redis->set($cacheKey, $crawler->html());
+        }
+
+        return $crawler;
     }
 
     /**
