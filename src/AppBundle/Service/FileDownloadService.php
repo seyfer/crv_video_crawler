@@ -64,6 +64,11 @@ class FileDownloadService
         }
     }
 
+    /**
+     * @param $remoteFile
+     * @param $localFile
+     * @param OutputInterface $output
+     */
     public static function downloadWithProgress($remoteFile, $localFile, OutputInterface $output)
     {
         $file = fopen($remoteFile, 'rb');

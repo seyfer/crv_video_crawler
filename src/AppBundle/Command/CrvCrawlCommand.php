@@ -286,9 +286,10 @@ class CrvCrawlCommand extends ContainerAwareCommand
 
             $videoName = $link->getVideoName();
             $videoName = str_replace('?', '', $videoName);
-            $videoName = str_replace('/','-', $videoName);
+            $videoName = str_replace('/', '-', $videoName);
 
-            $localFile = $courseDir . DIRECTORY_SEPARATOR . $videoName . ".mp4";
+            $localFile = $courseDir . DIRECTORY_SEPARATOR . $link->getPosition() . " " .
+                         $videoName . ".mp4";
 
             if ($fs->exists($localFile) && $overwrite) {
                 $fs->remove($localFile);
@@ -300,7 +301,7 @@ class CrvCrawlCommand extends ContainerAwareCommand
 
 //            exit(dump($videoUrl, $localFile));
 
-            $this->output->writeln("id " . $link->getId());
+            $this->output->writeln(" id " . $link->getId());
 
             $this->downloadVideo($videoUrl, $localFile);
 

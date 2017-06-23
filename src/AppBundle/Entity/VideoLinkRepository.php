@@ -13,6 +13,33 @@ use Doctrine\ORM\EntityRepository;
 class VideoLinkRepository extends EntityRepository
 {
     /**
+     * @return array
+     */
+    public function removeAll()
+    {
+        $qb = $this->getEntityManager()->createQueryBuilder();
+
+        $qb->delete($this->getEntityName(), 'e');
+
+        return $qb->getQuery()->getResult();
+    }
+
+    /**
+     * @param bool $downloaded
+     * @return array
+     */
+    public function markAll($downloaded = false)
+    {
+        $qb = $this->getEntityManager()->createQueryBuilder();
+
+        $qb->update($this->getEntityName(), 'e')
+           ->set('e.downloaded', '?1')
+           ->setParameter(1, $downloaded);
+
+        return $qb->getQuery()->getResult();
+    }
+
+    /**
      * @param array $params
      * @return array
      */
